@@ -28,6 +28,7 @@ import {
   getAccountBasics,
   type LookupResponseBody,
 } from '@neup/logica/account/lookup';
+import { prisma as db } from '@neup/core/database/prisma';
 
 export type AccountSelfAuthenticationCheckType = 'local' | 'remote';
 
@@ -215,6 +216,46 @@ export async function getBasics(authToken?: string | null): Promise<AccountSelfB
 }
 
 /*
+::neup.documentation::logica-account-self-ensure-record-function
+::function ensureRecord(authToken)
+
+Ensures the authenticated account is synchronized into the local accounts table.
+
+::public
+
+Returns the local account record for the authenticated NeupID account, creating
+or updating it with the available account basics.
+
+::public end
+
+::end
+*/
+export async function ensureRecord(authToken?: string | null) {
+  const authentication = await isAuthenticated('local', authToken);
+  if (!authentication.authenticated || !('payload' in authentication)) return null;
+
+  const accountId = authentication.payload.aid;
+  if (!accountId) return null;
+
+  const basics = (await getBasics(authToken))[0];
+
+  return db.account.upsert({
+    where: { id: accountId },
+    create: {
+      id: accountId,
+      displayName: basics?.displayName ?? '',
+      displayImage: basics?.displayImage ?? '',
+      neupId: basics?.neupid ?? null,
+    },
+    update: {
+      ...(basics?.displayName !== undefined ? { displayName: basics.displayName ?? '' } : {}),
+      ...(basics?.displayImage !== undefined ? { displayImage: basics.displayImage ?? '' } : {}),
+      ...(basics?.neupid !== undefined ? { neupId: basics.neupid ?? null } : {}),
+    },
+  });
+}
+
+/*
 ::neup.documentation::logica-account-self-object
 ::function self
 
@@ -232,4 +273,5 @@ session.
 export const self = {
   isAuthenticated,
   getBasics,
+  ensureRecord,
 } as const;
