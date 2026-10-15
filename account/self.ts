@@ -216,8 +216,8 @@ export async function getBasics(authToken?: string | null): Promise<AccountSelfB
 }
 
 /*
-::neup.documentation::logica-account-self-ensure-record-function
-::function ensureRecord(authToken)
+::neup.documentation::logica-account-self-ensure-account-function
+::function ensureAccount(authToken)
 
 Ensures the authenticated account is synchronized into the local accounts table.
 
@@ -230,29 +230,51 @@ or updating it with the available account basics.
 
 ::end
 */
-export async function ensureRecord(authToken?: string | null) {
+export async function ensureAccount(authToken?: string | null) {
   const authentication = await isAuthenticated('local', authToken);
   if (!authentication.authenticated || !('payload' in authentication)) return null;
 
   const accountId = authentication.payload.aid;
   if (!accountId) return null;
 
-  const basics = (await getBasics(authToken))[0];
+  const existingAccount = await db.account.findUnique({ where: { id: accountId } });
 
-  return db.account.upsert({
-    where: { id: accountId },
-    create: {
-      id: accountId,
-      displayName: basics?.displayName ?? '',
-      displayImage: basics?.displayImage ?? '',
-      neupId: basics?.neupid ?? null,
-    },
-    update: {
-      ...(basics?.displayName !== undefined ? { displayName: basics.displayName ?? '' } : {}),
-      ...(basics?.displayImage !== undefined ? { displayImage: basics.displayImage ?? '' } : {}),
-      ...(basics?.neupid !== undefined ? { neupId: basics.neupid ?? null } : {}),
-    },
-  });
+  try {
+    const response = await getAccountBasics({
+      accountId,
+      fields: ['accountType', 'displayName', 'displayImage', 'neupid'],
+    });
+
+    if (!response.ok || !response.body.success) return existingAccount;
+
+    const basics = response.body;
+    const accountType = basics.accountType?.trim() || existingAccount?.type;
+    if (!accountType) return existingAccount;
+
+    const displayName = basics.displayName?.trim()
+      || basics.neupid?.trim()
+      || existingAccount?.displayName
+      || 'User';
+
+    return db.account.upsert({
+      where: { id: accountId },
+      create: {
+        id: accountId,
+        type: accountType,
+        displayName,
+        displayImage: basics.displayImage ?? null,
+        neupId: basics.neupid ?? null,
+      },
+      update: {
+        type: accountType,
+        displayName,
+        displayImage: basics.displayImage ?? existingAccount?.displayImage ?? null,
+        neupId: basics.neupid ?? existingAccount?.neupId ?? null,
+      },
+    });
+  } catch {
+    return existingAccount;
+  }
 }
 
 /*
@@ -273,5 +295,5 @@ session.
 export const self = {
   isAuthenticated,
   getBasics,
-  ensureRecord,
+  ensureAccount,
 } as const;
